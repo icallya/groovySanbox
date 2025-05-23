@@ -1,22 +1,13 @@
-import groovy.json.JsonBuilder
-import groovy.json.JsonSlurper
+import groovy.json.*
 // https://github.com/janbodnar/Groovy-Examples/blob/main/httpclient.md
-import java.net.URI
-import java.net.http.HttpClient
-import java.net.http.HttpRequest
-import java.net.http.HttpResponse
+import java.lang.Object
+import java.net.URLConnection
+import java.net.HttpURLConnection
 import javax.net.ssl.HostnameVerifier
 import javax.net.ssl.HttpsURLConnection
-import java.security.NoSuchAlgorithmException
-import java.security.SecureRandom
 import javax.net.ssl.SSLContext
-import javax.net.ssl.SSLSession
-import javax.net.ssl.SSLEngine
 import javax.net.ssl.TrustManager
 import javax.net.ssl.X509TrustManager
-import javax.net.ssl.X509ExtendedTrustManager
-import java.security.cert.X509Certificate
-
 
 class DemoClass implements AutoCloseable {
   private String jsonString
@@ -73,11 +64,11 @@ class DemoClass implements AutoCloseable {
   }
 }
 
+
+
+
 class osAPIClient implements AutoCloseable {
   private String     auth
-  private HttpClient osaclnt
-  private SSLContext sslContext     = SSLContext.getInstance("SSL")
-  private X509TrustManager trustAll = [getAcceptedIssuers: {}, checkClientTrusted: { a, b -> }, checkServerTrusted: { a, b -> }] as X509TrustManager
 
   @Override
   public void close() {
@@ -93,29 +84,44 @@ class osAPIClient implements AutoCloseable {
     return res
   }
 
-  private static final String getBasicAuthenticationHeader(String username, String password) {
-    String valueToEncode = username + ":" + password;
-    return "Basic " + Base64.getEncoder().encodeToString(valueToEncode.getBytes());
+  private static final String getBasicAuthenticationHeader(String auth) {
+    return "Basic " + Base64.getEncoder().encodeToString(auth.getBytes());
   }
 
   osAPIClient(String url,String auth) {
-    //bypass SSL cert verification
-    println('''--header "Authorisation: Basic '''+auth.bytes.encodeBase64().toString()+'''" '''+url+'''\n''')
-    this.sslContext.init(null, [trustAll as TrustManager] as TrustManager[], new SecureRandom())
-    def hostnameVerifier = [verify: { hostname, session -> true }]
-    HttpsURLConnection.defaultSSLSocketFactory = this.sslContext.socketFactory
-    HttpsURLConnection.setDefaultHostnameVerifier(hostnameVerifier as HostnameVerifier)
+    def nullTrustManager = [ checkClientTrusted: { chain, authType ->  }
+                            ,checkServerTrusted: { chain, authType ->  }
+                            ,getAcceptedIssuers: { [] as java.security.cert.X509Certificate[] }
+                           ]
 
-    URLConnection uc = new URL(url).openConnection() as URLConnection
-    uc.setRequestProperty ("Authorization", "Basic " + auth.bytes.encodeBase64().toString());
-    InputStream in = uc.getInputStream();
+    def nullHostnameVerifier = [  verify: { hostname, session -> true }
+                               ]
 
-    println( resp.responseCode)
-    if(resp.responseCode.equals(200)) {
-      respBody = resp.inputStream.text
-      println respBody
+    SSLContext sc = SSLContext.getInstance("SSL")
+    sc.init(null, [nullTrustManager as X509TrustManager] as TrustManager[], null)
+    HttpsURLConnection.setDefaultSSLSocketFactory(sc.getSocketFactory())
+    HttpsURLConnection.setDefaultHostnameVerifier(nullHostnameVerifier as HostnameVerifier)
+    URL                addr  = new URL(url+'''/_cat/indices''')
+    HttpsURLConnection ucon  = (HttpsURLConnection) addr.openConnection();
+    ucon.setRequestProperty('''Authorization''',getBasicAuthenticationHeader(auth))
+    ucon.setRequestProperty('''Accept''',       '''application/json''')
+    ucon.setRequestProperty('''Content-Typ''',  '''application/json''')
+    ucon.setRequestMethod("GET")
+    int resp = ucon.getResponseCode()
+    println("GET Response Code : " + resp)
+    if (resp == HttpsURLConnection.HTTP_OK) { // success
+      BufferedReader in = new BufferedReader(new InputStreamReader(ucon.getInputStream()));
+      String inputLine
+      String reply = ""
+      while ((inputLine  = in.readLine()) != null) {
+        reply = reply + inputLine
+      }
+      in.close()
+      def slurper = new groovy.json.JsonSlurper()
+      def result = slurper.parseText(reply)
+      println(JsonOutput.prettyPrint(reply))
+    } else {
+      println("GET request did not work.");
     }
-
   }
-
 }
